@@ -1,4 +1,4 @@
-# Makefile for OS Project 6: Sockets
+# Makefile for OS Project 6: Reliable File Transfer
 
 TAR = ex6.tar
 TAR_CMD = tar cvf
