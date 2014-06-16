@@ -6,10 +6,10 @@ CC = g++ -std=c++11 -Wall
 
 all: clftp srftp
 
-clftp: clftp.cpp
+clftp: clftp.cpp ftp.h
 	$(CC) clftp.cpp -o clftp
 
-srftp: srftp.cpp
+srftp: srftp.cpp ftp.h
 	$(CC) srftp.cpp -o srftp
 	
 clean:
