@@ -300,7 +300,7 @@ int handle_connections()
  * Upon returning from this function, the server is ready
  * to accept connections from clients.
  */
-int establish(unsigned short port)
+void establish(unsigned short port)
 {
 //	cout << "establishing connection" << endl;
 	int sfd;
@@ -344,8 +344,6 @@ int establish(unsigned short port)
 		error(LISTEN_ERROR);
 		exit(EXIT_CODE);
 	}
-
-	return sfd;
 }
 
 /**
@@ -358,9 +356,3 @@ int main(int argc, char** argv)
 	server_fd = establish(srv_port);
 	handle_connections();
 }
-
-
-
-
-
-
