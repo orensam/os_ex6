@@ -22,8 +22,8 @@ static const string GETHOSTBYNAME_ERROR = "Failed retrieving host info";
 static const string SOCKET_ERROR = "Failed creating socket";
 static const string BIND_ERROR = "Failed binding socket to port";
 static const string LISTEN_ERROR = "Failed listening to port";
-static const string READ_ERROR = "read() failed";
-static const string WRITE_ERROR = "fwrite() failed";
+static const string READ_ERROR = "Failed reading data from socket";
+static const string WRITE_ERROR = "Failed writing to file";
 static const string CLIENT_FD_ERROR = "Failed retrieving client FD";
 static const string ACCEPT_ERROR = "Failed accepting connection";
 static const string READ_FILE_ERROR = "Failed reading file from client";
@@ -47,41 +47,57 @@ int server_fd;
 timeval timeout;
 
 // Client handling
-fd_set fds;
 
+/**
+ * A struct that represents a single client.
+ * Saves the clients filename and file pointer,
+ * and a counter for the number of bytes left to receive.
+ */
 struct Client
 {
-	//sockaddr_in cli_addr;
-	//unsigned int filename_size;
-
 	string filename;
 	unsigned int bytes_left;
 	FILE * fp;
 };
-
 typedef struct Client Client;
 
+// The list of active clients.
 static unordered_map<int, Client> clients;
 
-unsigned int clilen = sizeof(sockaddr_in);
+// The list of clients that finished their transfer
 vector<int> finished_fds;
 
+// The FD set for the clients
+fd_set fds;
+
+// Length of client aockaddr
+unsigned int clilen = sizeof(sockaddr_in);
+
+/**
+ * Ouputs the given message as an error to stderr, 
+ * and returns a failure code.
+ */
 int error(string msg)
 {
 	cerr << ERROR_PREFIX << msg << endl;
 	return FAIL;
 }
 
+/**
+ * Resets the FD set according to the list of active clients.
+ */
 int reset_fds()
 {
 	cout << "in reset_fds()" << endl;
 	int max;
+    
+    // Delete the existing FDs, and add the server's FD
 	FD_ZERO(&fds);
 	FD_SET(server_fd, &fds);
 	max = server_fd +1;
-
+    
+    // Iterate the active clients and add them to the FD set
 	unordered_map<int, Client>::iterator it;
-
 	for(it = clients.begin(); it != clients.end(); ++it)
 	{
 		FD_SET(it->first, &fds);
