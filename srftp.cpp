@@ -2,44 +2,29 @@
  * Server side
  */
 
+#include "ftp.h"
 #include <limits.h>
-#include <stdio.h>
-#include <iostream>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <string.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <fstream>
+
 #include <vector>
 #include <unordered_map>
 
-#define SUCCESS 0
-#define FAIL -1
-#define EXIT_CODE 1
 #define BUFFER_SIZE 1024
 #define PORT_PARA_INDX 1
+#define TIMEOUT_SEC 3
 
 using namespace std;
 
 static const string ERROR_PREFIX = "ERROR: ";
-static const string GETHOSTBYNAME_ERROR = "gethostbyname() failed";
-static const string SOCKET_ERROR = "socket() failed";
-static const string BIND_ERROR = "bind() failed";
-static const string LISTEN_ERROR = "listen() failed";
+static const string GETHOSTNAME_ERROR = "Failed retrieving hostname";
+static const string GETHOSTBYNAME_ERROR = "Failed retrieving host info";
+static const string SOCKET_ERROR = "Failed creating socket";
+static const string BIND_ERROR = "Failed binding socket to port";
+static const string LISTEN_ERROR = "Failed listening to port";
 static const string READ_ERROR = "read() failed";
 static const string WRITE_ERROR = "fwrite() failed";
 
 int srv_port;
 int srv_sock;
-
-int _nameSize;
-int _fileSize;
-char* _fileToTransfer;
-char* _fileToSave;
 
 typedef struct hostent hostent;
 typedef struct sockaddr sockaddr;
@@ -51,7 +36,7 @@ char srv_name[HOST_NAME_MAX+1];
 hostent *srv_hostent;
 sockaddr_in srv_addr;
 int server_fd;
-timeval tv;
+timeval timeout;
 
 // Client handling
 fd_set fds;
@@ -59,9 +44,9 @@ fd_set fds;
 struct Client
 {
 	//sockaddr_in cli_addr;
+	//unsigned int filename_size;
 
 	string filename;
-	unsigned int filename_size;
 	unsigned int bytes_left;
 	FILE * fp;
 };
@@ -130,7 +115,7 @@ int accept_new_connection()
 	to_read = sizeof(int);
 	buf = (char*) malloc(to_read);
 	if (read_from_sock(cfd, to_read, buf) < 0) return FAIL;
-	cli.filename_size = to_read = *((int*) buf) + 1;
+	to_read = *((int*) buf) + 1; // now to_read is the filename size
 	free(buf);
 
 	// Read filename
@@ -194,10 +179,20 @@ int read_client_file(int cfd, Client& cli)
 	return SUCCESS;
 }
 
-void reset_tv()
+void reset_timeout()
 {
-	tv.tv_sec = 2;
-	tv.tv_usec = 0;
+	timeout.tv_sec = TIMEOUT_SEC;
+	timeout.tv_usec = 0;
+}
+
+void remove_finished_clients()
+{
+	vector<int>::iterator vit;
+	for(vit = finished_fds.begin(); vit != finished_fds.end(); ++vit)
+	{
+		clients.erase(*vit);
+	}
+	finished_fds.clear();
 }
 
 int handle_connections()
@@ -205,14 +200,12 @@ int handle_connections()
 	//cout << "starting to handle connections" << endl;
 	int max, cfd;
 
-
 	while(true)
 	{
 		max = reset_fds();
+		reset_timeout();
 
-		reset_tv();
-
-		if (select(max, &fds, NULL, NULL, &tv) > 0)
+		if (select(max, &fds, NULL, NULL, &timeout) > 0)
 	    {
 	    	if (FD_ISSET(server_fd, &fds))
 	    	{
@@ -234,12 +227,7 @@ int handle_connections()
 					}
 				}
 	    	}
-	    	vector<int>::iterator vit = finished_fds.begin();
-	    	for(;vit != finished_fds.end();++vit)
-	    	{
-	    		clients.erase(*vit);
-	    	}
-	    	finished_fds.clear();
+	    	remove_finished_clients();
 	    }
 	}
 	return SUCCESS;
@@ -247,53 +235,56 @@ int handle_connections()
 
 int establish(unsigned short port)
 {
-	cout << "establishing connection" << endl;
+//	cout << "establishing connection" << endl;
 	int sfd;
 
-	gethostname(srv_name, HOST_NAME_MAX);
-
-	srv_hostent = gethostbyname(srv_name);
-
-	if (srv_hostent == NULL)
+	if (gethostname(srv_name, HOST_NAME_MAX) < 0)
 	{
-		return error(GETHOSTBYNAME_ERROR);
+		error(GETHOSTNAME_ERROR);
+		exit(EXIT_CODE);
 	}
 
-	// sockaddr_in filling
+	if ((srv_hostent = gethostbyname(srv_name)) == NULL)
+	{
+		error(GETHOSTBYNAME_ERROR);
+		exit(EXIT_CODE);
+	}
+
+	// Create the address struct
 	memset(&srv_addr, 0, sizeof(sockaddr_in));
 	srv_addr.sin_family = srv_hostent->h_addrtype;
-	memcpy(&srv_addr.sin_addr, srv_hostent->h_addr, srv_hostent->h_length); /* this is our host address */
-	srv_addr.sin_port= htons(port); /* this is our port number */
+	memcpy(&srv_addr.sin_addr, srv_hostent->h_addr, srv_hostent->h_length);
+	srv_addr.sin_port= htons(port);
 
 	// Create socket
 	if ((sfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
-		return error(SOCKET_ERROR);
+		error(SOCKET_ERROR);
+		exit(EXIT_CODE);
 	}
 
-	// And bind it
+	// Bind socket and port
 	if (bind(sfd, (sockaddr*) &srv_addr, sizeof(sockaddr_in)) < 0)
 	{
 		close(sfd);
-		return error(BIND_ERROR);
+		error(BIND_ERROR);
+		exit(EXIT_CODE);
 	}
 
+	// Start listening to the port
 	if (listen(sfd, SOMAXCONN) < 0)
 	{
-		return error(LISTEN_ERROR);
+		error(LISTEN_ERROR);
+		exit(EXIT_CODE);
 	}
+
 	return sfd;
 }
 
 int main(int argc, char** argv)
 {
 	srv_port = atoi(argv[PORT_PARA_INDX]);
-	cout << "Opening server with port " << srv_port << endl;
-	if ((server_fd = establish(srv_port)) < 0)
-	{
-		cout << "establish error" << endl;
-		exit(EXIT_CODE);
-	}
+	server_fd = establish(srv_port);
 	handle_connections();
 }
 
