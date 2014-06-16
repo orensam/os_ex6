@@ -1,15 +1,17 @@
 /**
- * Server side
+ * srftp.cpp - A server-side program for a simple file-transfer protocol.
+ * Created by Yoni Herzog & Oren Samuel
  */
 
 #include "ftp.h"
+
 #include <limits.h>
 
 #include <vector>
 #include <unordered_map>
 
 #define BUFFER_SIZE 1024
-#define PORT_PARA_INDX 1
+#define PORT_PARA_IDX 1
 #define TIMEOUT_SEC 3
 
 using namespace std;
@@ -304,7 +306,7 @@ int establish(unsigned short port)
 
 int main(int argc, char** argv)
 {
-	srv_port = atoi(argv[PORT_PARA_INDX]);
+	srv_port = atoi(argv[PORT_PARA_IDX]);
 	server_fd = establish(srv_port);
 	handle_connections();
 }
