@@ -27,6 +27,9 @@ static const string WRITE_ERROR = "fwrite() failed";
 static const string CLIENT_FD_ERROR = "Failed retrieving client FD";
 static const string ACCEPT_ERROR = "Failed accepting connection";
 static const string READ_FILE_ERROR = "Failed reading file from client";
+static const string READ_NAME_SIZE_ERROR = "Failed reading filename size";
+static const string READ_FILENAME_ERROR = "Failed reading filename";
+static const string READ_FILE_SIZE_ERROR = "Failed reading file size";
 
 int srv_port;
 int srv_sock;
@@ -90,6 +93,10 @@ int reset_fds()
 	return max;
 }
 
+/**
+ * Read from the socket sock into the buffer buf,
+ * until n_bytes bytes are read.
+ */
 int read_from_sock(int sock, unsigned int n_bytes, char* buf)
 {
     unsigned int bytes_read = 0;
@@ -97,10 +104,11 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
 
     while (bytes_read < n_bytes)
     {
+        // Still need to read
     	void* temp = buf + bytes_read;
         result = read(sock, temp, n_bytes-bytes_read);
         if (result < 1 )
-        {
+        {            
         	free(buf);
             return error(READ_ERROR);
         }
@@ -109,6 +117,10 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
     return bytes_read;
 }
 
+/**
+ * Accepts a new connection from the socket, reads the metadata from the client,
+ * and adds the client to the list of active clients.
+ */
 int accept_new_connection()
 {
 	int cfd, to_read;
@@ -123,23 +135,24 @@ int accept_new_connection()
 	// Read name size
 	to_read = sizeof(int);
 	buf = (char*) malloc(to_read);
-	if (read_from_sock(cfd, to_read, buf) < 0) return FAIL;
-	to_read = *((int*) buf) + 1; // now to_read is the filename size
+	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_NAME_SIZE_ERROR);
+	to_read = *((int*) buf) + 1; // Now to_read is the filename size
 	free(buf);
 
 	// Read filename
 	buf = (char*) malloc(to_read);
-	if (read_from_sock(cfd, to_read, buf) < 0) return FAIL;
-	cli.filename = buf;
+	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_FILENAME_ERROR);
+	cli.filename = buf; // Now we know the client's destination filename
 	free(buf);
 
 	// Read file size
 	to_read = sizeof(int);
 	buf = (char*) malloc(to_read);
-	if (read_from_sock(cfd, to_read, buf) < 0) return FAIL;
-	cli.bytes_left = *((int*) buf);
+	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_FILE_SIZE_ERROR);
+	cli.bytes_left = *((int*) buf); // Now we know we how many file bytes we need to read.
 	free(buf);
-
+    
+    // Open the file, add the client to the active client list and return the client's FD
 	cli.fp = fopen(cli.filename.c_str(), "wb");
 	clients[cfd] = cli;
 
@@ -148,7 +161,10 @@ int accept_new_connection()
 	return cfd;
 }
 
-
+/**
+ * Reads a chunk of data from the file being
+ * sent from the client.
+ */
 int read_client_file(int cfd, Client& cli)
 {
 	unsigned int to_read = min<unsigned int>(cli.bytes_left, BUFFER_SIZE);
@@ -156,15 +172,13 @@ int read_client_file(int cfd, Client& cli)
 	char* buf = (char*) malloc(to_read);
 
 	//cout << "trying to read file. requested " << to_read << " bytes" << endl;
-
-
 	if (read_from_sock(cfd, to_read, buf) < 0)
 	{
 		//cout << "error in read" << endl;
-		return FAIL;
+        return error(FILE_READ_ERROR);
 	}
-
-	string sbuf(buf, to_read);
+    
+	//string sbuf(buf, to_read);
 	//cout << "buffer is: " << sbuf << endl;
 
 	unsigned int written = fwrite(buf, sizeof(char), to_read, cli.fp);
@@ -188,6 +202,9 @@ int read_client_file(int cfd, Client& cli)
 	return SUCCESS;
 }
 
+/**
+ * Resets the select timeout.
+ */
 void reset_timeout()
 {
 	timeout.tv_sec = TIMEOUT_SEC;
@@ -208,6 +225,11 @@ void remove_finished_clients()
 	finished_fds.clear();
 }
 
+/**
+ * Waits for new connections, accepts them, and retrieves the files
+ * from the clients.
+ * On error, terminates the server's operation and exits with code != 0.
+ */
 int handle_connections()
 {
 	//cout << "starting to handle connections" << endl;
@@ -250,12 +272,18 @@ int handle_connections()
 					}
 				}
 	    	}
+            // Stop reading from the clients that we finished reading from
 	    	remove_finished_clients();
 	    }
 	}
 	return SUCCESS;
 }
 
+/**
+ * Establishes the server.
+ * Upon returning from this function, the server is ready
+ * to accept connections from clients.
+ */
 int establish(unsigned short port)
 {
 //	cout << "establishing connection" << endl;
@@ -304,6 +332,10 @@ int establish(unsigned short port)
 	return sfd;
 }
 
+/**
+ * Main function - establishes the server and then lets it
+ * wait for connections.
+ */
 int main(int argc, char** argv)
 {
 	srv_port = atoi(argv[PORT_PARA_IDX]);
