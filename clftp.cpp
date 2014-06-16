@@ -1,4 +1,4 @@
-/********************************************************************
+/**
  * clftp.cpp - Client side for a simple file-transfer protocol.
  * This program created by Netanel Zakay for OS course, 2013-2014, HUJI
  * Edited by Yoni Herzog & Oren Samuel
@@ -138,8 +138,8 @@ int main(int argc, char** argv){
 	sendFileContent(ifs);
 
 	//closing
-	free (filename_to_save);
-	free (filename_to_transfer);
+	free(filename_to_save);
+	free(filename_to_transfer);
 	close(server_socket);
 	ifs.close();
 
