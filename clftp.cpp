@@ -1,8 +1,8 @@
-//********************************************************************
-// clftp.cpp - Client side for a simple file-transfer protocol.
-// This program created by Netanel Zakay for OS course, 2013-2014, HUJI
-// Edited by Yoni Herzog & Oren Samuel
-//********************************************************************
+/********************************************************************
+ * clftp.cpp - Client side for a simple file-transfer protocol.
+ * This program created by Netanel Zakay for OS course, 2013-2014, HUJI
+ * Edited by Yoni Herzog & Oren Samuel
+ */
 
 
 
