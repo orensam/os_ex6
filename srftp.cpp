@@ -22,6 +22,9 @@ static const string BIND_ERROR = "Failed binding socket to port";
 static const string LISTEN_ERROR = "Failed listening to port";
 static const string READ_ERROR = "read() failed";
 static const string WRITE_ERROR = "fwrite() failed";
+static const string CLIENT_FD_ERROR = "Failed retrieving client FD";
+static const string ACCEPT_ERROR = "Failed accepting connection";
+static const string READ_FILE_ERROR = "Failed reading file from client";
 
 int srv_port;
 int srv_sock;
@@ -96,6 +99,7 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
         result = read(sock, temp, n_bytes-bytes_read);
         if (result < 1 )
         {
+        	free(buf);
             return error(READ_ERROR);
         }
         bytes_read += result;
@@ -105,11 +109,14 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
 
 int accept_new_connection()
 {
-	int to_read;
+	int cfd, to_read;
 	char* buf;
 	Client cli;
 
-	int cfd = accept(server_fd, (sockaddr*) &srv_addr, &clilen);
+	if ((cfd = accept(server_fd, (sockaddr*) &srv_addr, &clilen) < 0))
+	{
+		return error(ACCEPT_ERROR);
+	}
 
 	// Read name size
 	to_read = sizeof(int);
@@ -185,6 +192,10 @@ void reset_timeout()
 	timeout.tv_usec = 0;
 }
 
+/**
+ * Removes the clients whose file we finished receiving
+ * from the list of active clients.
+ */
 void remove_finished_clients()
 {
 	vector<int>::iterator vit;
@@ -207,23 +218,33 @@ int handle_connections()
 
 		if (select(max, &fds, NULL, NULL, &timeout) > 0)
 	    {
-	    	if (FD_ISSET(server_fd, &fds))
+			// There's an FD that's ready for reading
+
+			if (FD_ISSET(server_fd, &fds))
 	    	{
-	    		cfd = accept_new_connection();
-	    		if (cfd < 0)
+				// Server FD is ready, i.e a new client is trying to send data.
+				// We accept the connection and read the metadata
+	    		if ((cfd = accept_new_connection()) < 0)
 	    		{
-	    			//ERROR
+	    			error(CLIENT_FD_ERROR);
+	    			exit(EXIT_CODE);
 	    		}
 	    	}
-	    	unordered_map<int, Client>::iterator it;
 
+			// Now check which client FDs are ready for reading
+	    	unordered_map<int, Client>::iterator it;
 	    	for(it = clients.begin(); it != clients.end(); ++it)
 	    	{
-	    		if FD_ISSET(it->first, &fds)
+	    		cfd = it->first;
+	    		Client& cli = it->second;
+
+	    		if FD_ISSET(cfd, &fds)
 				{
-	    			if (read_client_file(it->first, it->second) < 0)
+	    			// Client is ready, read a file chunk
+	    			if (read_client_file(cfd, cli) < 0)
 					{
-	    				return FAIL;
+	    				error(READ_FILE_ERROR);
+	    				exit(EXIT_CODE);
 					}
 				}
 	    	}
