@@ -4,13 +4,11 @@
  */
 
 #include "ftp.h"
-
 #include <limits.h>
 
 #include <vector>
 #include <unordered_map>
 
-#define BUFFER_SIZE 1024
 #define PORT_PARA_IDX 1
 #define TIMEOUT_SEC 3
 
@@ -34,6 +32,11 @@ static const string READ_FILE_SIZE_ERROR = "Failed reading file size";
 int srv_port;
 int srv_sock;
 
+int name_size;
+int file_size;
+char* file_to_transfer;
+char* file_to_save;
+
 typedef struct hostent hostent;
 typedef struct sockaddr sockaddr;
 typedef struct sockaddr_in sockaddr_in;
@@ -47,6 +50,7 @@ int server_fd;
 timeval timeout;
 
 // Client handling
+fd_set fds;
 
 /**
  * A struct that represents a single client.
@@ -59,22 +63,16 @@ struct Client
 	unsigned int bytes_left;
 	FILE * fp;
 };
+
 typedef struct Client Client;
 
-// The list of active clients.
 static unordered_map<int, Client> clients;
 
-// The list of clients that finished their transfer
+unsigned int clilen = sizeof(sockaddr_in);
 vector<int> finished_fds;
 
-// The FD set for the clients
-fd_set fds;
-
-// Length of client aockaddr
-unsigned int clilen = sizeof(sockaddr_in);
-
 /**
- * Ouputs the given message as an error to stderr, 
+ * Ouputs the given message as an error to stderr,
  * and returns a failure code.
  */
 int error(string msg)
@@ -90,13 +88,11 @@ int reset_fds()
 {
 	cout << "in reset_fds()" << endl;
 	int max;
-    
-    // Delete the existing FDs, and add the server's FD
 	FD_ZERO(&fds);
 	FD_SET(server_fd, &fds);
 	max = server_fd +1;
-    
-    // Iterate the active clients and add them to the FD set
+
+	// Iterate the active clients and add them to the FD set
 	unordered_map<int, Client>::iterator it;
 	for(it = clients.begin(); it != clients.end(); ++it)
 	{
@@ -120,11 +116,10 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
 
     while (bytes_read < n_bytes)
     {
-        // Still need to read
     	void* temp = buf + bytes_read;
         result = read(sock, temp, n_bytes-bytes_read);
-        if (result < 1 )
-        {            
+        if (result < 1)
+        {
         	free(buf);
             return error(READ_ERROR);
         }
@@ -143,10 +138,7 @@ int accept_new_connection()
 	char* buf;
 	Client cli;
 
-	if ((cfd = accept(server_fd, (sockaddr*) &srv_addr, &clilen) < 0))
-	{
-		return error(ACCEPT_ERROR);
-	}
+	if ((cfd = accept(server_fd, (sockaddr*) &srv_addr, &clilen)) < 0) return error(ACCEPT_ERROR);
 
 	// Read name size
 	to_read = sizeof(int);
@@ -167,8 +159,8 @@ int accept_new_connection()
 	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_FILE_SIZE_ERROR);
 	cli.bytes_left = *((int*) buf); // Now we know we how many file bytes we need to read.
 	free(buf);
-    
-    // Open the file, add the client to the active client list and return the client's FD
+
+	// Open the file, add the client to the active client list and return the client's FD
 	cli.fp = fopen(cli.filename.c_str(), "wb");
 	clients[cfd] = cli;
 
@@ -188,13 +180,15 @@ int read_client_file(int cfd, Client& cli)
 	char* buf = (char*) malloc(to_read);
 
 	//cout << "trying to read file. requested " << to_read << " bytes" << endl;
+
+
 	if (read_from_sock(cfd, to_read, buf) < 0)
 	{
 		//cout << "error in read" << endl;
-        return error(FILE_READ_ERROR);
+		return error(READ_FILE_ERROR);
 	}
-    
-	//string sbuf(buf, to_read);
+
+	string sbuf(buf, to_read);
 	//cout << "buffer is: " << sbuf << endl;
 
 	unsigned int written = fwrite(buf, sizeof(char), to_read, cli.fp);
@@ -234,7 +228,7 @@ void reset_timeout()
 void remove_finished_clients()
 {
 	vector<int>::iterator vit;
-	for(vit = finished_fds.begin(); vit != finished_fds.end(); ++vit)
+	for(vit = finished_fds.begin(); vit != finished_fds.end();++vit)
 	{
 		clients.erase(*vit);
 	}
@@ -259,10 +253,9 @@ void handle_connections()
 		if (select(max, &fds, NULL, NULL, &timeout) > 0)
 	    {
 			// There's an FD that's ready for reading
-
-			if (FD_ISSET(server_fd, &fds))
+	    	if (FD_ISSET(server_fd, &fds))
 	    	{
-				// Server FD is ready, i.e a new client is trying to send data.
+	    		// Server FD is ready, i.e a new client is trying to send data.
 				// We accept the connection and read the metadata
 	    		if ((cfd = accept_new_connection()) < 0)
 	    		{
@@ -271,7 +264,7 @@ void handle_connections()
 	    		}
 	    	}
 
-			// Now check which client FDs are ready for reading
+	    	// Now check which client FDs are ready for reading
 	    	unordered_map<int, Client>::iterator it;
 	    	for(it = clients.begin(); it != clients.end(); ++it)
 	    	{
@@ -288,7 +281,6 @@ void handle_connections()
 					}
 				}
 	    	}
-            // Stop reading from the clients that we finished reading from
 	    	remove_finished_clients();
 	    }
 	}
@@ -301,7 +293,7 @@ void handle_connections()
  */
 int establish(unsigned short port)
 {
-//	cout << "establishing connection" << endl;
+	cout << "establishing connection" << endl;
 	int sfd;
 
 	if (gethostname(srv_name, HOST_NAME_MAX) < 0)
@@ -319,8 +311,8 @@ int establish(unsigned short port)
 	// Create the address struct
 	memset(&srv_addr, 0, sizeof(sockaddr_in));
 	srv_addr.sin_family = srv_hostent->h_addrtype;
-	memcpy(&srv_addr.sin_addr, srv_hostent->h_addr, srv_hostent->h_length);
-	srv_addr.sin_port= htons(port);
+	memcpy(&srv_addr.sin_addr, srv_hostent->h_addr, srv_hostent->h_length); /* this is our host address */
+	srv_addr.sin_port= htons(port); /* this is our port number */
 
 	// Create socket
 	if ((sfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -357,5 +349,9 @@ int main(int argc, char** argv)
 	server_fd = establish(srv_port);
 	handle_connections();
 }
+
+
+
+
 
 
