@@ -15,5 +15,5 @@ srftp: srftp.cpp ftp.h
 clean:
 	rm -f $(TAR) srftp clftp
 
-tar: clftp.cpp srftp.cpp Makefile README
-	$(TAR_CMD) $(TAR) clftp.cpp srftp.cpp Makefile README
+tar: clftp.cpp srftp.cpp ftp.h Makefile README
+	$(TAR_CMD) $(TAR) clftp.cpp srftp.cpp ftp.h Makefile README
