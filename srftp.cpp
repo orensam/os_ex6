@@ -3,17 +3,26 @@
  * Created by Yoni Herzog & Oren Samuel
  */
 
+
 #include "ftp.h"
 #include <limits.h>
 
 #include <vector>
 #include <unordered_map>
 
+// Defs
+
 #define PORT_PARA_IDX 1
 #define TIMEOUT_SEC 3
 
+typedef struct hostent hostent;
+typedef struct sockaddr sockaddr;
+typedef struct sockaddr_in sockaddr_in;
+typedef struct timeval timeval;
+
 using namespace std;
 
+// Error messages
 static const string ERROR_PREFIX = "ERROR: ";
 static const string GETHOSTNAME_ERROR = "Failed retrieving hostname";
 static const string GETHOSTBYNAME_ERROR = "Failed retrieving host info";
@@ -28,29 +37,18 @@ static const string READ_FILE_ERROR = "Failed reading file from client";
 static const string READ_NAME_SIZE_ERROR = "Failed reading filename size";
 static const string READ_FILENAME_ERROR = "Failed reading filename";
 static const string READ_FILE_SIZE_ERROR = "Failed reading file size";
+static const string FILENAME_EXISTS_ERROR = "File with the same name is currently being written";
 
-int srv_port;
-int srv_sock;
-
-int name_size;
-int file_size;
-char* file_to_transfer;
-char* file_to_save;
-
-typedef struct hostent hostent;
-typedef struct sockaddr sockaddr;
-typedef struct sockaddr_in sockaddr_in;
-typedef struct timeval timeval;
 
 // Server definition
 char srv_name[HOST_NAME_MAX+1];
+int server_fd;
+int server_port;
 hostent *srv_hostent;
 sockaddr_in srv_addr;
-int server_fd;
 timeval timeout;
 
 // Client handling
-fd_set fds;
 
 /**
  * A struct that represents a single client.
@@ -63,13 +61,13 @@ struct Client
 	unsigned int bytes_left;
 	FILE * fp;
 };
-
 typedef struct Client Client;
 
 static unordered_map<int, Client> clients;
-
 unsigned int clilen = sizeof(sockaddr_in);
+fd_set fds;
 vector<int> finished_fds;
+
 
 /**
  * Ouputs the given message as an error to stderr,
@@ -86,7 +84,7 @@ int error(string msg)
  */
 int reset_fds()
 {
-	cout << "in reset_fds()" << endl;
+//	cout << "in reset_fds()" << endl;
 	int max;
 	FD_ZERO(&fds);
 	FD_SET(server_fd, &fds);
@@ -108,6 +106,7 @@ int reset_fds()
 /**
  * Read from the socket sock into the buffer buf,
  * until n_bytes bytes are read.
+ * In case of error, frees the buffer.
  */
 int read_from_sock(int sock, unsigned int n_bytes, char* buf)
 {
@@ -128,6 +127,18 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
     return bytes_read;
 }
 
+bool filename_exists(string fn)
+{
+	unordered_map<int, Client>::iterator it;
+	for(it = clients.begin(); it != clients.end(); ++it)
+	{
+		if (it->second.filename == fn)
+		{
+			return true;
+		}
+	}
+	return false;
+}
 /**
  * Accepts a new connection from the socket, reads the metadata from the client,
  * and adds the client to the list of active clients.
@@ -152,6 +163,14 @@ int accept_new_connection()
 	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_FILENAME_ERROR);
 	cli.filename = buf; // Now we know the client's destination filename
 	free(buf);
+
+	if (filename_exists(cli.filename))
+	{
+		// This is a recoverable error, kill this client and let the server live
+		error(FILENAME_EXISTS_ERROR);
+		close(cfd);
+		return 0;
+	}
 
 	// Read file size
 	to_read = sizeof(int);
@@ -345,8 +364,8 @@ int establish(unsigned short port)
  */
 int main(int argc, char** argv)
 {
-	srv_port = atoi(argv[PORT_PARA_IDX]);
-	server_fd = establish(srv_port);
+	server_port = atoi(argv[PORT_PARA_IDX]);
+	server_fd = establish(server_port);
 	handle_connections();
 }
 
