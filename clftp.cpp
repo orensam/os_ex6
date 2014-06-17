@@ -16,10 +16,14 @@ using namespace std;
 
 //********************************* VARIABLES *********************************
 
-#define PORT_PARA_INDX 1
-#define HOST_PARA_INDX 2
-#define FILE_NAME_PARA_INDX 3
-#define OUT_FILE_NAME_PARA_INDX 4
+#define PORT_PARA_IDX 1
+#define HOST_PARA_IDX 2
+#define FILE_NAME_PARA_IDX 3
+#define OUT_FILE_NAME_PARA_IDX 4
+
+static const string OPEN_FILE_ERROR = "Failed opening source file";
+static const string CONNECT_ERROR = "Failed connecting to server";
+static const string SEND_ERROR = "Failed sending data to server";
 
 int server_port;
 int server_socket;
@@ -28,14 +32,14 @@ int file_size;
 char* filename_to_transfer;
 char* filename_to_save;
 
-struct sockaddr_in serv_addr;
-struct hostent *server = NULL;
+sockaddr_in serv_addr;
+hostent *server = NULL;
 
 //****************************** HELPER FUNCTIONS ****************************
 
-void error(string errorMessage)
+void error(string msg)
 {
-	cerr << errorMessage;
+	cerr << ERROR_PREFIX << msg << endl;
 	exit(EXIT_CODE);
 }
 
@@ -60,30 +64,30 @@ void send_buffer(char* buf, int buf_size)
 	while (bytes_sent < buf_size)
 	{
 		sent = send(server_socket, buf + bytes_sent, buf_size - bytes_sent, 0);
-		if (sent== FAIL)
+		if (sent < 0)
 		{
-			error ("ERROR: receiving data");
+			error(SEND_ERROR);
 		}
 		bytes_sent += sent;
 	}
 }
 
-void sendFileContent(ifstream& ifs){
+void send_file_content(ifstream& ifs)
+{
 	char* buffer = (char*) malloc(BUFFER_SIZE);
-	if (buffer==NULL)
-		error ("ERROR: malloc error.");
-	int toSend=file_size;
+	if (buffer == NULL)
+		error(MALLOC_ERROR);
+	int to_send=file_size;
 
-	while (toSend>BUFFER_SIZE){
-		ifs.read(buffer,BUFFER_SIZE);
-		send_buffer(buffer , BUFFER_SIZE);
-		toSend-=BUFFER_SIZE;
+	while (to_send > BUFFER_SIZE){
+		ifs.read(buffer, BUFFER_SIZE);
+		send_buffer(buffer, BUFFER_SIZE);
+		to_send -= BUFFER_SIZE;
 	}
-	if (toSend!=0){
-		ifs.read(buffer,toSend);
-		send_buffer(buffer , toSend);
+	if (to_send != 0){
+		ifs.read(buffer, to_send);
+		send_buffer(buffer, to_send);
 	}
-	
 	free (buffer);
 }
 
@@ -91,51 +95,52 @@ void sendFileContent(ifstream& ifs){
 //*********************************** MAIN ************************************
 
 
-int main(int argc, char** argv){
+int main(int argc, char** argv)
+{
 
 	// Get the port and host
-	server_port = atoi(argv[PORT_PARA_INDX]);
-	server = gethostbyname(argv[HOST_PARA_INDX]);
+	server_port = atoi(argv[PORT_PARA_IDX]);
+	server = gethostbyname(argv[HOST_PARA_IDX]);
 	string tmp;
 
 	//get the (local) file name
-	tmp = argv[FILE_NAME_PARA_INDX]; 
-	filename_to_transfer = (char*)malloc(tmp.size()+1);
-	if (filename_to_transfer==NULL)
-		error ("ERROR: malloc error.");
-	memcpy (filename_to_transfer, tmp.c_str(), tmp.size()+1);
-	tmp = argv[OUT_FILE_NAME_PARA_INDX]; 
+	tmp = argv[FILE_NAME_PARA_IDX];
+	filename_to_transfer = (char*) malloc(tmp.size() + 1);
+	if (filename_to_transfer == NULL)
+		error(MALLOC_ERROR);
+	memcpy(filename_to_transfer, tmp.c_str(), tmp.size() + 1);
+	tmp = argv[OUT_FILE_NAME_PARA_IDX];
 
 	//get the file to save name
-	name_size=tmp.length();
-	filename_to_save = (char*)malloc(tmp.size()+1);
-	if (filename_to_save==NULL)
-		error ("ERROR: malloc error.");
-	memcpy (filename_to_save, tmp.c_str(), tmp.size()+1);
+	name_size = tmp.length();
+	filename_to_save = (char*) malloc(tmp.size() + 1);
+	if (filename_to_save == NULL)
+		error (MALLOC_ERROR);
+	memcpy (filename_to_save, tmp.c_str(), tmp.size() + 1);
 
 	//create a socket:
 	server_socket = socket(AF_INET, SOCK_STREAM, 0);
-	bzero((char *) &serv_addr, sizeof(serv_addr));
+	bzero((char*) &serv_addr, sizeof(serv_addr));
 	serv_addr.sin_family = AF_INET;
-	bcopy((char *)server->h_addr,(char *)&serv_addr.sin_addr.s_addr, server->h_length);
+	bcopy((char*) server->h_addr, (char*) &serv_addr.sin_addr.s_addr, server->h_length);
 	serv_addr.sin_port = htons(server_port);
 
 	//open the file and get it's size:
-	ifstream ifs (filename_to_transfer, ios::in);
+	ifstream ifs(filename_to_transfer, ios::in);
 	if (ifs == NULL)
-		error("ERROR: open file");
+		error(OPEN_FILE_ERROR);
 
 	//connect to the server.
-	if (connect(server_socket,((struct sockaddr*)&serv_addr),sizeof(serv_addr)) < 0)//connecting to server
-		error("ERROR connecting");
+	if (connect(server_socket, (sockaddr*) &serv_addr, sizeof(serv_addr)) < 0)
+		error(CONNECT_ERROR);
 
 	file_size = get_file_size(ifs);
 
 	//send all the information
 	send_buffer((char*) &name_size , sizeof(int));
-	send_buffer(filename_to_save, name_size+1);
-	send_buffer ((char*) &file_size, sizeof (int));
-	sendFileContent(ifs);
+	send_buffer(filename_to_save, name_size + 1);
+	send_buffer ((char*) &file_size, sizeof(int));
+	send_file_content(ifs);
 
 	//closing
 	free(filename_to_save);

@@ -11,19 +11,12 @@
 #include <unordered_map>
 
 // Defs
-
 #define PORT_PARA_IDX 1
 #define TIMEOUT_SEC 3
-
-typedef struct hostent hostent;
-typedef struct sockaddr sockaddr;
-typedef struct sockaddr_in sockaddr_in;
-typedef struct timeval timeval;
 
 using namespace std;
 
 // Error messages
-static const string ERROR_PREFIX = "ERROR: ";
 static const string GETHOSTNAME_ERROR = "Failed retrieving hostname";
 static const string GETHOSTBYNAME_ERROR = "Failed retrieving host info";
 static const string SOCKET_ERROR = "Failed creating socket";
@@ -37,8 +30,11 @@ static const string READ_FILE_ERROR = "Failed reading file from client";
 static const string READ_NAME_SIZE_ERROR = "Failed reading filename size";
 static const string READ_FILENAME_ERROR = "Failed reading filename";
 static const string READ_FILE_SIZE_ERROR = "Failed reading file size";
+static const string OPEN_FILE_ERROR = "Failed opening destination file";
 static const string FILENAME_EXISTS_ERROR = "File with the same name is currently being written";
 
+// Macros
+#define MALLOC_CHAR(ptr, size) ptr = (char*) malloc(size); if (ptr == NULL) return error(MALLOC_ERROR)
 
 // Server definition
 char srv_name[HOST_NAME_MAX+1];
@@ -116,7 +112,7 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
     while (bytes_read < n_bytes)
     {
     	void* temp = buf + bytes_read;
-        result = read(sock, temp, n_bytes-bytes_read);
+        result = recv(sock, temp, n_bytes-bytes_read, 0);
         if (result < 1)
         {
         	free(buf);
@@ -127,6 +123,10 @@ int read_from_sock(int sock, unsigned int n_bytes, char* buf)
     return bytes_read;
 }
 
+/**
+ * Returns true iff a file with the same name
+ * is currently being received.
+ */
 bool filename_exists(string fn)
 {
 	unordered_map<int, Client>::iterator it;
@@ -153,20 +153,30 @@ int accept_new_connection()
 
 	// Read name size
 	to_read = sizeof(int);
-	buf = (char*) malloc(to_read);
-	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_NAME_SIZE_ERROR);
+	MALLOC_CHAR(buf, to_read);
+	if (read_from_sock(cfd, to_read, buf) < 0)
+	{
+		close(cfd);
+		return error(READ_NAME_SIZE_ERROR);
+	}
 	to_read = *((int*) buf) + 1; // Now to_read is the filename size
 	free(buf);
 
 	// Read filename
-	buf = (char*) malloc(to_read);
-	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_FILENAME_ERROR);
+	MALLOC_CHAR(buf, to_read);
+	if (read_from_sock(cfd, to_read, buf) < 0)
+	{
+		close(cfd);
+		return error(READ_FILENAME_ERROR);
+	}
 	cli.filename = buf; // Now we know the client's destination filename
 	free(buf);
 
+	// If the another file of the same name is being written now,
+	// ignore the request and kill the connection with the client.
+	// This is a recoverable error - the server will still be alive.
 	if (filename_exists(cli.filename))
 	{
-		// This is a recoverable error, kill this client and let the server live
 		error(FILENAME_EXISTS_ERROR);
 		close(cfd);
 		return 0;
@@ -174,13 +184,21 @@ int accept_new_connection()
 
 	// Read file size
 	to_read = sizeof(int);
-	buf = (char*) malloc(to_read);
-	if (read_from_sock(cfd, to_read, buf) < 0) return error(READ_FILE_SIZE_ERROR);
+	MALLOC_CHAR(buf, to_read);
+	if (read_from_sock(cfd, to_read, buf) < 0)
+	{
+		close(cfd);
+		return error(READ_FILE_SIZE_ERROR);
+	}
 	cli.bytes_left = *((int*) buf); // Now we know we how many file bytes we need to read.
 	free(buf);
 
 	// Open the file, add the client to the active client list and return the client's FD
-	cli.fp = fopen(cli.filename.c_str(), "wb");
+	if ((cli.fp = fopen(cli.filename.c_str(), "wb")) == NULL)
+	{
+		close(cfd);
+		return error(OPEN_FILE_ERROR);
+	}
 	clients[cfd] = cli;
 
 	//cout << "finished accept_con(). filename_size: " << cli.filename_size << ", filename: " << cli.filename << ", filesize: " << cli.bytes_left << endl;
@@ -196,18 +214,17 @@ int read_client_file(int cfd, Client& cli)
 {
 	unsigned int to_read = min<unsigned int>(cli.bytes_left, BUFFER_SIZE);
 
-	char* buf = (char*) malloc(to_read);
+	char* buf;
+	MALLOC_CHAR(buf, to_read);
 
 	//cout << "trying to read file. requested " << to_read << " bytes" << endl;
-
-
 	if (read_from_sock(cfd, to_read, buf) < 0)
 	{
 		//cout << "error in read" << endl;
 		return error(READ_FILE_ERROR);
 	}
 
-	string sbuf(buf, to_read);
+	//string sbuf(buf, to_read);
 	//cout << "buffer is: " << sbuf << endl;
 
 	unsigned int written = fwrite(buf, sizeof(char), to_read, cli.fp);
@@ -312,9 +329,10 @@ void handle_connections()
  */
 int establish(unsigned short port)
 {
-	cout << "establishing connection" << endl;
+	//cout << "establishing connection" << endl;
 	int sfd;
 
+	// Get the host info
 	if (gethostname(srv_name, HOST_NAME_MAX) < 0)
 	{
 		error(GETHOSTNAME_ERROR);
