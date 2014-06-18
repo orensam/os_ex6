@@ -5,11 +5,82 @@ EX: 6
 
 FILES:
 
-clftp.cpp - 
-srftp.cpp -  
-Makefile - 
+clftp.cpp - A server-side program for a simple file-transfer protocol.
+
+srftp.cpp - A client-side program for a simple file-transfer protocol.
+
+Makefile - Compiles the server program and client program. Contains other abilities
+such as deleting work files, creating tar etc. 
 
 README - This file.
 
 
 REMARKS:
+
+In this exercise we implemented a simple file-transfer protocol.
+
+We used the supplied client-side program, with a slight modification of the protocol:
+the client sends the following information (in this order):
+(1) filename size; (2) filename; (3) file size; (4) file contents.
+
+(In the supplied protocol, (2) and (3) were reversed - but we decided that
+sending all the information about the filename first would make more sense)
+
+The client side constructs a socket to the needed server, connects to it,
+then sends the data as described in the protocol.
+
+The server side operates in two steps:
+First, it establishes the server - creates a socket, binds the socket and the needed port,
+and starts listening to requests. Once the listening starts,  
+
+ANSWERS:
+
+Reliable file transfer protocol over UDP connection
+---------------------------------------------------
+
+
+Performance evaluation
+----------------------
+Attached is performance.jpg, a graph that describes the time (in milliseconds) it took to 
+send files of various sizes (100 KB, 1 MB, 10 MB, 100 MB, 1 GB).
+
+In order to level the playing field, so to speak, all files are random binary files, which were 
+created using dd, by copying the desired amount of data from /dev/urandom.
+
+A Python script was used to average each file's send time over 30 consecutive transfers,
+under each of the two conditions - either with the server and client running on the same computer,
+or with the client on one computer and the server on another.
+
+All tests were performed on Aquarium computers, and for the remote-client test, two adjacent
+computers were used.
+
+On to the graph itself. Since the scale of the filesize axis is logarithmic, so is the send-time
+axis. We can see several interesting things in the graph:
+
+1. For every order-of-magnitude increase in filesize, there is roughly an order-of-magnitude
+increase in the time required to send the file. Since the trend line in this two-logarithmic-axis
+graph is visibly close to linear, this also means that the connection between the filesize and
+the send time is roughly linear.
+
+2. The send time for files of size 10MB or less is objectively faster when using a single computer
+for the client and the server, compared to using two different computers. 
+This makes sense - sending a file over the network requires routing each packet of data via 
+network-routing devices such as routers and swithces, whereas sending a packet to the localhost 
+does not require such an overhead.
+This is easily visible in a simple traceroute test - traceroute-ing your own computer (again,
+in the Aquarium) results in a response time of ~0.02ms, whereas traceroute-ing a remote computer 
+in the lab takes x10 that time, and clocks in at around 0.2ms.
+This x10 network overhead is visible in the graph points concerning smaller file sizes (100K, 1M),
+where time for over-the-network communication is roughly one order-of-magnitude longer than sending
+a file from a computer to itself.
+
+3. For larger file sizes, namely 100 MB and 1 GB, the difference be
+
+
+
+
+
+
+
+
+
