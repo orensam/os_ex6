@@ -11,6 +11,7 @@
 #include "ftp.h"
 
 #include <fstream>
+#include <sys/time.h>
 
 using namespace std;
 
@@ -136,11 +137,20 @@ int main(int argc, char** argv)
 
 	file_size = get_file_size(ifs);
 
+	timeval begin, end, diff;
+	gettimeofday(&begin, NULL);
+
 	//send all the information
 	send_buffer((char*) &name_size , sizeof(int));
 	send_buffer(filename_to_save, name_size + 1);
 	send_buffer ((char*) &file_size, sizeof(int));
 	send_file_content(ifs);
+
+	gettimeofday(&end, NULL);
+	timersub(&end, &begin, &diff);
+
+	double sec = diff.tv_sec + (diff.tv_usec / 1000000.0);
+	//cout << sec << endl;
 
 	//closing
 	free(filename_to_save);
