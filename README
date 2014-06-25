@@ -33,11 +33,77 @@ The server side operates in two steps:
 First, it establishes the server - creates a socket, binds the socket and the needed port,
 and starts listening to requests. Once the listening starts,  
 
+
 ANSWERS:
 
 Reliable file transfer protocol over UDP connection
 ---------------------------------------------------
 
+Lets imagine we're using UDP sockets instead of the standard TCP sockets for our protocol.
+We'll describe the arising problems, and our suggested solutions for them.
+
+Note that a very big, general change in our protocol will be that the server responds to the client
+during the transfer, in contrast to our current protocol, where only the client sends data.
+
+1. UDP is connectionless. i.e it does not perform a handshake to start the connection.
+This means that the client cannot be sure that the server is actually ready to receive the data,
+and thus the server might lose the beginning (or all) of the sent file.
+Moreover, the server does not know where the received data is coming from - it simply listens to
+a port and receives data from whomever is sending it. 
+
+    The solution for this is to simulate, in our protocol, a connection-oriented environment:
+
+    a. Perform a handshake:
+    The client will first send a "SYN" packet. Once the server receives that packet, it knows that a 
+    new client is requesting to send data - this means that some basic resources will be initialized
+    for the new client, and in order to keep track of clients, a unique ID will be set for 
+    that client. The server will then respond with an "ACK" packet, which will contain the 
+    client's ID. When the client receives the ACK packet, the connection is set.
+    Next, the client can send the metadata, as in our protocol (i.e filename size, filename,
+    file size), and waits for the server to send an additional "ACK" packet in response.
+    The client will have a timeout for the ACK packet, and send the metadata again until it is
+    acknowledged.
+    
+    b. Use the unique ID in the communication.
+    In all future packets that the client sends, one of the metadata fields will be the ID that
+    the server has set for it. Upon receiving the packet, the server will now be able to know
+    which client the said packet belongs to, and handle it accordingly.
+
+2. a. UDP does not guarantee ordering. i.e the client's packets might arrive at any order, and at 
+      any time. This means that the server cannot just take the data it receives and write it into 
+      a file, it has to make sure that it writes the data in the real order of the data in the 
+      original file.
+
+   b. Moreover, once the client has finished sending all the packets, it has no way of knowing that
+      all of them have actually been received, so it cannot know when it can close the connection. 
+
+    The solution for (a) is to implement order handling in our protocol -
+    Every packet the client sends will have a unique, consecutive packet number.
+    Upon receiving a packet with number k, the server will write it to the file exactly after the
+    packets numbered 1..k-1 have been written to the file.
+    For each client, the server will save the numbers of the packets that it has not yet received,
+    and the time that passed since that packet was supposed to arrive.
+    After a certain timeout, if that packet has not yet been received, the server will send a "REQ"
+    packet with that packet number, which will ask the client to send that packet again.
+    
+    In order to solve the connection termination problem (b), Upon finishing of sending all the 
+    packets, the client will send a "REQFIN" packet. if the server has indeed received all 
+    the packets, it will send an "ACKFIN" packet, which will tell the client it can close the 
+    connection. Again, a timeout is needed, and the client will keep sending the REQFIN packets 
+    as long as the server does not reply with an ACKFIN.
+    
+3. UDP does not provide handling of erroneous data.
+This means that if a packet has a wrong UDP checksum value, the socket will simply drop it.
+    
+    This problem is already handled by the ordering mechanism described above -
+    If the socket drops a packet, our server will just assume that this packet has not arrived,
+    and will request the client to send it again.
+
+This protocol is efficient since it avoids the large overheads of TCP - i.e ACKs for every packet,
+the usage of extra flags etc. Our protocol is tailor-made for simple file transfer - no more, 
+no less. It will use UDP as a basis, which is very lightweight and fast, and both sides of
+communication will harass eachother only when it is really needed. 
+       
 
 Performance evaluation
 ----------------------
@@ -65,7 +131,7 @@ the send time is roughly linear.
 2. The send time for files of size 10MB or less is objectively faster when using a single computer
 for the client and the server, compared to using two different computers. 
 This makes sense - sending a file over the network requires routing each packet of data via 
-network-routing devices such as routers and swithces, whereas sending a packet to the localhost 
+network-routing devices such as routers and switches, whereas sending a packet to the localhost 
 does not require such an overhead.
 This is easily visible in a simple traceroute test - traceroute-ing your own computer (again,
 in the Aquarium) results in a response time of ~0.02ms, whereas traceroute-ing a remote computer 
@@ -74,13 +140,9 @@ This x10 network overhead is visible in the graph points concerning smaller file
 where time for over-the-network communication is roughly one order-of-magnitude longer than sending
 a file from a computer to itself.
 
-3. For larger file sizes, namely 100 MB and 1 GB, the difference be
-
-
-
-
-
-
-
-
-
+3. For larger file sizes, namely 100 MB and 1 GB, the difference between single-computer and
+remote-computer setups is almost nonexistent - this is probably due to the fact that the server
+has to write the incoming files to the disk, and when sending such large amounts of data,
+the disk-write time becomes much more significant than the network transfer time.
+I.e, writing a 1GB file to the disk takes around 10 seconds anyway, so it doesn't really matter
+whether we transfer that file over a socket with a 0.02ms or 0.2ms response time.
